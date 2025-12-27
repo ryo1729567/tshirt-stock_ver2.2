@@ -22,7 +22,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- カスタムCSS（iPad/スマホ対応） ---
+# --- カスタムCSS（iPad/スマホ対応・視認性修正版） ---
 st.markdown("""
 <style>
     /* メインエリアの調整 */
@@ -54,13 +54,14 @@ st.markdown("""
     .big-label {
         font-size: 1.2rem;
         text-align: center;
-        color: #555;
+        /* 文字色指定を削除し、テーマに合わせる */
+        opacity: 0.8; 
     }
-    /* Expanderのデザイン */
+    /* Expanderのデザイン（修正：背景色固定を削除） */
     div[data-testid="stExpander"] {
         border: 1px solid #e0e0e0;
         border-radius: 8px;
-        background-color: #ffffff;
+        /* background-color: #ffffff; ←削除しました */
         margin-bottom: 0.8rem;
     }
 </style>
@@ -71,7 +72,7 @@ DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 INVENTORY_FILE = DATA_DIR / "inventory_data.json"
 RECORDS_FILE = DATA_DIR / "daily_records.json"
-TAG_FILE = DATA_DIR / "tag_data.json"  # 新規: タグデータ用
+TAG_FILE = DATA_DIR / "tag_data.json"
 
 TSHIRT_TYPES = [
     'パンクラス×禅道会コラボTシャツ(ホワイト)ゼンプロマークなし',
@@ -125,7 +126,6 @@ class InventoryManager:
             try:
                 with open(TAG_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    # 履歴を日付順(降順)にソート
                     if "history" in data:
                         data["history"] = sorted(data["history"], key=lambda x: x.get('timestamp', ''), reverse=True)
                     return data
@@ -345,18 +345,16 @@ def export_current_excel():
     output.seek(0)
     st.download_button("📥 Excelダウンロード", output, f"在庫_{datetime.now().strftime('%Y%m%d')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# --- タブ2: タグ管理 (修正版) ---
+# --- タブ2: タグ管理 ---
 def tags_tab():
     st.header("🏷️ タグ（衣服）在庫管理")
     
-    # 現在の在庫表示
     current_stock = st.session_state.tags.get("current_stock", 0)
     
     st.markdown("<div class='big-label'>現在の在庫数</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='big-number'>{current_stock:,} 枚</div>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # アクション入力
     st.subheader("📝 在庫の更新（使用・入荷・不良）")
     st.caption("※ タグを使用した日、または入荷した際にここから入力してください。")
 
@@ -365,7 +363,6 @@ def tags_tab():
         with col1:
             action_type = st.radio("区分", ["使用 (－)", "入荷・追加 (＋)", "不良 (－)"], horizontal=False)
         with col2:
-            # 修正: value=0 -> value=1 に変更 (min_value=1のため)
             amount = st.number_input("数量 (枚)", min_value=1, step=1, value=1)
             note = st.text_input("備考 (任意)", placeholder="例: 12月分受注, 追加発注分など")
         
@@ -376,7 +373,6 @@ def tags_tab():
     
     st.markdown("---")
     
-    # 履歴表示
     st.subheader("📜 更新履歴")
     history = st.session_state.tags.get("history", [])
     if history:
@@ -386,7 +382,6 @@ def tags_tab():
         st.info("まだ履歴がありません。")
 
 def update_tag_stock(action_type, amount, note):
-    """タグの在庫を更新し履歴に追加"""
     current_stock = st.session_state.tags.get("current_stock", 0)
     
     if "使用" in action_type:
@@ -399,11 +394,9 @@ def update_tag_stock(action_type, amount, note):
         new_stock = current_stock - amount
         act_label = "不良"
     
-    # 在庫がマイナスになる場合の警告（記録は許可する）
     if new_stock < 0:
         st.warning("⚠️ 在庫数がマイナスになります。")
 
-    # データ更新
     new_entry = {
         "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         "date": datetime.now().strftime('%Y-%m-%d'),
@@ -414,7 +407,7 @@ def update_tag_stock(action_type, amount, note):
     }
     
     st.session_state.tags["current_stock"] = new_stock
-    st.session_state.tags["history"].insert(0, new_entry) # 先頭に追加
+    st.session_state.tags["history"].insert(0, new_entry)
     
     InventoryManager.save_tags(st.session_state.tags)
     st.success(f"✅ {act_label} {amount}枚 を記録しました。（現在庫: {new_stock}枚）")
@@ -505,7 +498,6 @@ def settings_tab():
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("📤 バックアップ")
-        # タグデータも含める
         full_data = {
             'inventory': st.session_state.inventory,
             'records': st.session_state.records,
@@ -521,13 +513,10 @@ def settings_tab():
         if uploaded:
             try:
                 data = json.load(uploaded)
-                # Tシャツデータ
                 if 'inventory' in data: st.session_state.inventory = data['inventory']
                 if 'records' in data: st.session_state.records = data['records']
-                # タグデータ
                 if 'tags' in data: st.session_state.tags = data['tags']
                 
-                # ファイル保存
                 InventoryManager.save_inventory(st.session_state.inventory)
                 InventoryManager.save_records(st.session_state.records)
                 InventoryManager.save_tags(st.session_state.tags)
@@ -537,7 +526,7 @@ def settings_tab():
             except Exception as e:
                 st.error(f"復元失敗: {e}")
 
-# --- タブ5: マニュアル (新規) ---
+# --- タブ5: マニュアル ---
 def manual_tab():
     st.header("📖 システム操作マニュアル")
     st.markdown("""
@@ -606,7 +595,7 @@ def main():
         "📦 Tシャツ在庫", 
         "🏷️ タグ管理", 
         "📊 Tシャツ記録", 
-        "⚙️ データ管理",
+        "⚙️ データ管理", 
         "📖 マニュアル"
     ])
     
