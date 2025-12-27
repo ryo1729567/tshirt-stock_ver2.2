@@ -8,51 +8,71 @@ import os
 import io
 import re
 from pathlib import Path
+import unicodedata
+
+# --- 設定 ---
+PAGE_TITLE = "Tシャツ＆タグ在庫管理システム"
+PAGE_ICON = "👕"
 
 # ページ設定
 st.set_page_config(
-    page_title="Tシャツ在庫管理システム",
-    page_icon="👕",
+    page_title=PAGE_TITLE,
+    page_icon=PAGE_ICON,
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# カスタムCSS（タブレット・PC対応）
+# --- カスタムCSS（iPad/スマホ対応） ---
 st.markdown("""
 <style>
-    .main {
-        padding: 1rem;
+    /* メインエリアの調整 */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 5rem;
     }
+    /* ボタンのスタイル強化 */
     .stButton>button {
         width: 100%;
-        border-radius: 5px;
-        height: 3em;
+        border-radius: 8px;
+        height: 3.5em;
         font-weight: bold;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    .inventory-input {
-        font-size: 1.2em;
+    /* 在庫入力フィールド */
+    .stNumberInput input {
         text-align: center;
+        font-size: 1.2rem;
     }
-    @media (max-width: 768px) {
-        .stColumn {
-            padding: 0.5rem;
-        }
+    /* タグ管理の現在の在庫数表示 */
+    .big-number {
+        font-size: 3rem;
+        font-weight: bold;
+        color: #0068c9;
+        text-align: center;
+        margin-bottom: 0;
     }
+    .big-label {
+        font-size: 1.2rem;
+        text-align: center;
+        color: #555;
+    }
+    /* Expanderのデザイン */
     div[data-testid="stExpander"] {
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        margin-bottom: 1rem;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        background-color: #ffffff;
+        margin-bottom: 0.8rem;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# データファイルパス
+# --- 定数・パス設定 ---
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 INVENTORY_FILE = DATA_DIR / "inventory_data.json"
 RECORDS_FILE = DATA_DIR / "daily_records.json"
+TAG_FILE = DATA_DIR / "tag_data.json"  # 新規: タグデータ用
 
-# Tシャツの種類
 TSHIRT_TYPES = [
     'パンクラス×禅道会コラボTシャツ(ホワイト)ゼンプロマークなし',
     'パンクラス×禅道会コラボTシャツ(ブラック)ゼンプロマークなし',
@@ -60,13 +80,12 @@ TSHIRT_TYPES = [
     'パンクラス×禅道会コラボTシャツ(ブラック)ゼンプロマークあり'
 ]
 
-# サイズ
 SIZES = ['150cm', '160cm', 'S', 'M', 'L', 'XL', 'XXL']
 
+# --- ロジッククラス ---
 class InventoryManager:
     @staticmethod
     def load_inventory():
-        """在庫データを読み込む"""
         if INVENTORY_FILE.exists():
             try:
                 with open(INVENTORY_FILE, 'r', encoding='utf-8') as f:
@@ -77,13 +96,11 @@ class InventoryManager:
     
     @staticmethod
     def save_inventory(inventory):
-        """在庫データを保存"""
         with open(INVENTORY_FILE, 'w', encoding='utf-8') as f:
             json.dump(inventory, f, ensure_ascii=False, indent=2)
     
     @staticmethod
     def load_records():
-        """日次記録を読み込む"""
         if RECORDS_FILE.exists():
             try:
                 with open(RECORDS_FILE, 'r', encoding='utf-8') as f:
@@ -95,38 +112,57 @@ class InventoryManager:
     
     @staticmethod
     def save_records(records):
-        """日次記録を保存"""
         sorted_records = sorted(records, key=lambda x: x['date'], reverse=True)
         with open(RECORDS_FILE, 'w', encoding='utf-8') as f:
             json.dump(sorted_records, f, ensure_ascii=False, indent=2)
-    
+
+    # --- タグ管理用メソッド ---
+    @staticmethod
+    def load_tags():
+        """タグデータを読み込む (在庫数と履歴)"""
+        default_data = {"current_stock": 0, "history": []}
+        if TAG_FILE.exists():
+            try:
+                with open(TAG_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # 履歴を日付順(降順)にソート
+                    if "history" in data:
+                        data["history"] = sorted(data["history"], key=lambda x: x.get('timestamp', ''), reverse=True)
+                    return data
+            except:
+                pass
+        return default_data
+
+    @staticmethod
+    def save_tags(tag_data):
+        """タグデータを保存"""
+        with open(TAG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(tag_data, f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def normalize_str(s):
+        return unicodedata.normalize('NFC', s)
+
     @staticmethod
     def determine_type_from_filename(filename):
-        """ファイル名からTシャツタイプを判定"""
-        base = os.path.basename(filename)
+        base = InventoryManager.normalize_str(os.path.basename(filename))
         base = base.replace('（', '(').replace('）', ')')
-        
         is_white = '白' in base or 'ホワイト' in base
         is_black = '黒' in base or 'ブラック' in base
         is_ari = 'あり' in base
         is_nasi = 'なし' in base
         
-        if is_white and is_nasi:
-            return 'パンクラス×禅道会コラボTシャツ(ホワイト)ゼンプロマークなし'
-        elif is_white and is_ari:
-            return 'パンクラス×禅道会コラボTシャツ(ホワイト)ゼンプロマークあり'
-        elif is_black and is_nasi:
-            return 'パンクラス×禅道会コラボTシャツ(ブラック)ゼンプロマークなし'
-        elif is_black and is_ari:
-            return 'パンクラス×禅道会コラボTシャツ(ブラック)ゼンプロマークあり'
+        if is_white and is_nasi: return 'パンクラス×禅道会コラボTシャツ(ホワイト)ゼンプロマークなし'
+        elif is_white and is_ari: return 'パンクラス×禅道会コラボTシャツ(ホワイト)ゼンプロマークあり'
+        elif is_black and is_nasi: return 'パンクラス×禅道会コラボTシャツ(ブラック)ゼンプロマークなし'
+        elif is_black and is_ari: return 'パンクラス×禅道会コラボTシャツ(ブラック)ゼンプロマークあり'
         return None
     
     @staticmethod
     def normalize_size(cell_value):
-        """セル値からサイズを抽出"""
-        val = str(cell_value).strip()
+        if cell_value is None: return None
+        val = InventoryManager.normalize_str(str(cell_value)).strip()
         val = val.translate(str.maketrans({chr(0xFF01 + i): chr(0x21 + i) for i in range(94)}))
-        
         if '150' in val: return '150cm'
         if '160' in val: return '160cm'
         if 'XXL' in val or '3L' in val: return 'XXL'
@@ -138,568 +174,446 @@ class InventoryManager:
     
     @staticmethod
     def parse_excel_date(value):
-        """Excel日付をYYYY-MM-DD形式に変換"""
-        if isinstance(value, datetime):
-            return value.strftime('%Y-%m-%d')
+        if value is None: return None
+        if isinstance(value, datetime): return value.strftime('%Y-%m-%d')
         if isinstance(value, str):
-            if re.match(r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}$', value.strip()):
-                try:
-                    return pd.to_datetime(value).strftime('%Y-%m-%d')
-                except:
-                    pass
+            cleaned = value.strip().replace('/', '-')
+            if re.match(r'^\d{4}-\d{1,2}-\d{1,2}$', cleaned):
+                try: return pd.to_datetime(cleaned).strftime('%Y-%m-%d')
+                except: pass
         return None
-    
+
     @staticmethod
     def import_matrix_excel(uploaded_files):
-        """マトリクス形式のExcelファイルをインポート"""
         date_records = {}
         total_loaded = 0
-        
         for uploaded_file in uploaded_files:
             target_type = InventoryManager.determine_type_from_filename(uploaded_file.name)
-            if not target_type:
-                continue
-            
+            if not target_type: continue
             try:
                 wb = openpyxl.load_workbook(uploaded_file, data_only=True)
                 ws = wb.active
-                
-                # ヘッダー行を探す
                 header_row_idx = None
                 date_col_map = {}
-                
-                for r in range(1, 10):
+                for r in range(1, 15):
                     row_values = [cell.value for cell in ws[r]]
-                    if any('商品名' in str(v) for v in row_values if v):
+                    if any(v and '商品名' in str(v) for v in row_values):
                         header_row_idx = r
                         for c_idx, val in enumerate(row_values):
                             d_str = InventoryManager.parse_excel_date(val)
-                            if d_str:
-                                date_col_map[c_idx] = d_str
+                            if d_str: date_col_map[c_idx] = d_str
                         break
-                
-                if not header_row_idx or not date_col_map:
-                    continue
-                
-                # データ行を読み込む
+                if not header_row_idx or not date_col_map: continue
                 for r in range(header_row_idx + 1, ws.max_row + 1):
                     row_values = [cell.value for cell in ws[r]]
-                    if not row_values:
-                        continue
-                    
+                    if not row_values: continue
                     product_name = ""
-                    if len(row_values) > 1 and row_values[1]:
-                        product_name = str(row_values[1])
-                    elif row_values[0]:
-                        product_name = str(row_values[0])
-                    
-                    if not product_name:
-                        continue
-                    
+                    if len(row_values) > 1 and row_values[1]: product_name = str(row_values[1])
+                    elif row_values[0]: product_name = str(row_values[0])
                     size = InventoryManager.normalize_size(product_name)
-                    if not size:
-                        continue
-                    
+                    if not size: continue
                     for c_idx, date_str in date_col_map.items():
                         if c_idx < len(row_values):
                             val = row_values[c_idx]
-                            try:
-                                count = int(float(val)) if val is not None else 0
-                            except:
-                                count = 0
-                            
-                            if date_str not in date_records:
-                                date_records[date_str] = {}
-                            if target_type not in date_records[date_str]:
-                                date_records[date_str][target_type] = {}
-                            
+                            try: count = int(float(val)) if val is not None else 0
+                            except: count = 0
+                            if date_str not in date_records: date_records[date_str] = {}
+                            if target_type not in date_records[date_str]: date_records[date_str][target_type] = {}
                             date_records[date_str][target_type][size] = count
                             total_loaded += 1
-            
             except Exception as e:
-                st.error(f"ファイル読み込みエラー: {uploaded_file.name} - {str(e)}")
-        
+                st.error(f"Error {uploaded_file.name}: {e}")
         return date_records, total_loaded
 
+# --- セッション初期化 ---
 def init_session_state():
-    """セッション状態を初期化"""
     if 'inventory' not in st.session_state:
         st.session_state.inventory = InventoryManager.load_inventory()
-    
     if 'records' not in st.session_state:
         st.session_state.records = InventoryManager.load_records()
-    
+    if 'tags' not in st.session_state:
+        st.session_state.tags = InventoryManager.load_tags()
     if 'edit_mode' not in st.session_state:
         st.session_state.edit_mode = {}
 
+# --- タブ1: Tシャツ在庫管理 ---
 def inventory_tab():
-    """在庫管理タブ"""
-    st.header("📦 在庫管理")
+    st.header("📦 Tシャツ在庫入力")
+    today = datetime.now().strftime("%Y-%m-%d")
     
-    today = datetime.now().strftime("%Y年%m月%d日")
-    st.info(f"📅 本日の日付: {today}")
-    st.caption("※ 入力欄は前回の在庫数で自動入力されています")
-    
-    # 最新記録から在庫を同期
-    if st.session_state.records:
-        latest_record = st.session_state.records[0]
-        st.session_state.inventory = latest_record['inventory']
-    
-    # ボタン
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("💾 本日の記録を保存", use_container_width=True):
+    last_record_date = st.session_state.records[0]['date'] if st.session_state.records else "なし"
+    if last_record_date != today:
+        st.warning(f"⚠️ 本日 ({today}) の記録がまだ保存されていません。（最終記録: {last_record_date}）")
+    else:
+        st.success(f"✅ 本日 ({today}) の記録は保存済みです。")
+
+    col_act1, col_act2 = st.columns(2)
+    with col_act1:
+        if st.button("💾 本日の記録を保存/更新", type="primary", use_container_width=True):
             save_daily_record()
-    with col2:
-        if st.button("📤 現在の在庫をExportダウンロード", use_container_width=True):
+    with col_act2:
+        if st.button("📤 Tシャツ在庫をExcelでDL", use_container_width=True):
             export_current_excel()
-    with col3:
-        uploaded_files = st.file_uploader("📥 Excelインポート", 
-                                         type=['xlsx', 'xls'], 
-                                         accept_multiple_files=True,
-                                         key="import_excel")
+
+    st.markdown("---")
+    with st.expander("📥 過去データをExcelから一括インポート"):
+        uploaded_files = st.file_uploader("Excelファイルをドラッグ&ドロップ", type=['xlsx', 'xls'], accept_multiple_files=True)
         if uploaded_files:
             import_excel_data(uploaded_files)
-    
-    # 各Tシャツタイプの在庫入力
+
+    st.markdown("### 在庫数入力")
     for ttype in TSHIRT_TYPES:
-        with st.expander(f"**{ttype}**", expanded=True):
+        display_name = ttype.replace('パンクラス×禅道会コラボTシャツ', '').replace('ゼンプロマーク', 'マーク')
+        with st.container():
+            st.markdown(f"**{display_name}**")
             cols = st.columns(len(SIZES))
-            
             for idx, size in enumerate(SIZES):
                 with cols[idx]:
-                    st.markdown(f"**{size}**")
                     current_val = st.session_state.inventory.get(ttype, {}).get(size, 0)
-                    
-                    new_val = st.number_input(
-                        "在庫数",
-                        min_value=0,
-                        value=current_val,
-                        step=1,
-                        key=f"inv_{ttype}_{size}",
-                        label_visibility="collapsed"
-                    )
-                    
+                    new_val = st.number_input(f"{size}", min_value=0, value=current_val, step=1, key=f"inv_{ttype}_{size}")
                     if new_val != current_val:
                         st.session_state.inventory[ttype][size] = new_val
                         InventoryManager.save_inventory(st.session_state.inventory)
                     
-                    # +/- ボタン
-                    col_btn1, col_btn2 = st.columns(2)
-                    with col_btn1:
-                        if st.button("➕", key=f"plus_{ttype}_{size}", use_container_width=True):
-                            st.session_state.inventory[ttype][size] += 1
-                            InventoryManager.save_inventory(st.session_state.inventory)
-                            st.rerun()
-                    with col_btn2:
-                        if st.button("➖", key=f"minus_{ttype}_{size}", use_container_width=True):
-                            st.session_state.inventory[ttype][size] = max(0, st.session_state.inventory[ttype][size] - 1)
-                            InventoryManager.save_inventory(st.session_state.inventory)
-                            st.rerun()
+                    c_minus, c_plus = st.columns(2)
+                    if c_minus.button("－", key=f"m_{ttype}_{size}"):
+                        st.session_state.inventory[ttype][size] = max(0, current_val - 1)
+                        InventoryManager.save_inventory(st.session_state.inventory)
+                        st.rerun()
+                    if c_plus.button("＋", key=f"p_{ttype}_{size}"):
+                        st.session_state.inventory[ttype][size] = current_val + 1
+                        InventoryManager.save_inventory(st.session_state.inventory)
+                        st.rerun()
+            st.markdown("---")
 
 def save_daily_record():
-    """本日の記録を保存"""
     today = datetime.now().strftime("%Y-%m-%d")
-    
-    # 既存記録をチェック
     existing_idx = None
     for idx, record in enumerate(st.session_state.records):
         if record['date'] == today:
             existing_idx = idx
             break
-    
     new_record = {
         'date': today,
         'timestamp': datetime.now().isoformat(),
         'inventory': json.loads(json.dumps(st.session_state.inventory)),
         'note': '手動保存'
     }
-    
     if existing_idx is not None:
         st.session_state.records[existing_idx] = new_record
-        st.success(f"✅ {today}の記録を更新しました")
+        st.toast(f"✅ {today}の記録を更新しました")
     else:
-        st.session_state.records.append(new_record)
-        st.success(f"✅ {today}の記録を保存しました")
-    
+        st.session_state.records.insert(0, new_record)
+        st.toast(f"✅ {today}の記録を新規保存しました")
     InventoryManager.save_records(st.session_state.records)
     st.rerun()
 
 def import_excel_data(uploaded_files):
-    """Excelデータをインポート"""
     date_records, total_loaded = InventoryManager.import_matrix_excel(uploaded_files)
-    
     if date_records:
         existing_map = {r['date']: r for r in st.session_state.records}
-        
         for date_str, type_data in date_records.items():
             if date_str in existing_map:
                 record = existing_map[date_str]
                 for ttype, sizes in type_data.items():
-                    if ttype not in record['inventory']:
-                        record['inventory'][ttype] = {s: 0 for s in SIZES}
-                    for s, count in sizes.items():
-                        record['inventory'][ttype][s] = count
+                    if ttype not in record['inventory']: record['inventory'][ttype] = {s: 0 for s in SIZES}
+                    for s, count in sizes.items(): record['inventory'][ttype][s] = count
             else:
-                new_inventory = {}
-                for ttype in TSHIRT_TYPES:
-                    new_inventory[ttype] = {s: 0 for s in SIZES}
-                
+                new_inventory = {t: {s: 0 for s in SIZES} for t in TSHIRT_TYPES}
                 for ttype, sizes in type_data.items():
-                    for s, count in sizes.items():
-                        new_inventory[ttype][s] = count
-                
-                new_record = {
-                    'date': date_str,
-                    'timestamp': f"{date_str}T12:00:00",
-                    'inventory': new_inventory,
-                    'note': 'Excelから自動取込'
-                }
+                    for s, count in sizes.items(): new_inventory[ttype][s] = count
+                new_record = {'date': date_str, 'timestamp': f"{date_str}T12:00:00", 'inventory': new_inventory, 'note': 'Excel自動取込'}
                 st.session_state.records.append(new_record)
-        
         InventoryManager.save_records(st.session_state.records)
-        st.success(f"✅ {len(uploaded_files)}個のファイルから{len(date_records)}日分のデータをインポートしました（更新セル数: {total_loaded}）")
+        st.success(f"✅ インポート完了: {len(date_records)}日分のデータを処理しました。")
         st.rerun()
     else:
-        st.warning("⚠️ インポート可能なデータが見つかりませんでした")
+        st.error("⚠️ データが見つかりませんでした。")
 
 def export_current_excel():
-    """現在の在庫をExcelエクスポート"""
     output = io.BytesIO()
     wb = openpyxl.Workbook()
-    
     for i, ttype in enumerate(TSHIRT_TYPES):
-        if i == 0:
-            ws = wb.active
-            ws.title = ttype[:31]
-        else:
-            ws = wb.create_sheet(title=ttype[:31])
-        
-        ws['A1'] = 'サイズ'
+        safe_title = ttype[:30].replace('/', '_')
+        if i == 0: ws = wb.active; ws.title = safe_title
+        else: ws = wb.create_sheet(title=safe_title)
+        ws.append(['サイズ', '在庫数'])
         for j, size in enumerate(SIZES):
-            ws.cell(row=1, column=j+2, value=size)
-        
-        ws['A2'] = '在庫数'
-        for j, size in enumerate(SIZES):
-            ws.cell(row=2, column=j+2, value=st.session_state.inventory[ttype][size])
-        
-        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-        for cell in ws[1]:
-            cell.fill = header_fill
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.alignment = Alignment(horizontal="center")
-    
+            ws.cell(row=j+2, column=1, value=size)
+            ws.cell(row=j+2, column=2, value=st.session_state.inventory[ttype].get(size, 0))
     wb.save(output)
     output.seek(0)
-    
-    st.download_button(
-        label="📥 Excelファイルをダウンロード",
-        data=output,
-        file_name=f"現在の在庫_{datetime.now().strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.download_button("📥 Excelダウンロード", output, f"在庫_{datetime.now().strftime('%Y%m%d')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+# --- タブ2: Tシャツ日次記録 ---
 def records_tab():
-    """日次記録タブ"""
-    st.header("📊 日次記録")
+    st.header("📊 Tシャツ日次記録")
+    with st.expander("🔎 期間で絞り込み", expanded=False):
+        c1, c2 = st.columns(2)
+        start_date = c1.date_input("開始", value=datetime.now() - timedelta(days=60))
+        end_date = c2.date_input("終了", value=datetime.now())
     
-    # 期間選択
-    col1, col2, col3 = st.columns([2, 2, 1])
-    with col1:
-        start_date = st.date_input("開始日", value=datetime.now() - timedelta(days=30))
-    with col2:
-        end_date = st.date_input("終了日", value=datetime.now())
-    with col3:
-        st.write("")  # スペーサー
-        if st.button("🔄 記録を更新", use_container_width=True):
-            st.rerun()
-    
-    # クイック選択ボタン
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        if st.button("📅 今週", use_container_width=True):
-            today = datetime.now()
-            start_date = today - timedelta(days=today.weekday())
-            end_date = today
-    with col2:
-        if st.button("📅 今月", use_container_width=True):
-            today = datetime.now()
-            start_date = today.replace(day=1)
-            end_date = today
-    with col3:
-        if st.button("📅 先月", use_container_width=True):
-            today = datetime.now()
-            first_day = today.replace(day=1)
-            last_month = first_day - timedelta(days=1)
-            start_date = last_month.replace(day=1)
-            end_date = last_month
-    with col4:
-        if st.button("📅 全期間", use_container_width=True):
-            if st.session_state.records:
-                start_date = datetime.strptime(st.session_state.records[-1]['date'], '%Y-%m-%d').date()
-                end_date = datetime.strptime(st.session_state.records[0]['date'], '%Y-%m-%d').date()
-    
-    # エクスポートボタン
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📊 CSVエクスポート", use_container_width=True):
-            export_csv(start_date, end_date)
-    with col2:
-        if st.button("📈 Excelエクスポート", use_container_width=True):
-            export_excel(start_date, end_date)
-    
-    # 記録をフィルタリング
-    start_str = start_date.strftime('%Y-%m-%d')
-    end_str = end_date.strftime('%Y-%m-%d')
-    
-    filtered_records = [r for r in st.session_state.records 
-                       if start_str <= r['date'] <= end_str]
-    
-    if not filtered_records:
-        st.info(f"📭 指定期間（{start_str} ～ {end_str}）の記録がありません")
-        return
-    
-    st.success(f"📊 記録サマリー: {len(filtered_records)}件 | 期間: {filtered_records[-1]['date']} ～ {filtered_records[0]['date']}")
-    
-    # 記録表示
-    for record in filtered_records:
-        date_str = record['date']
-        timestamp = datetime.fromisoformat(record['timestamp']).strftime('%H:%M:%S') if 'T' in record['timestamp'] else ""
-        note = record.get('note', '')
-        
-        with st.expander(f"📅 {date_str} {timestamp} {f'({note})' if note else ''}", expanded=False):
-            # 編集・削除ボタン
-            col1, col2, col3 = st.columns([6, 1, 1])
-            with col2:
-                if st.button("✏️ 編集", key=f"edit_{date_str}"):
-                    st.session_state.edit_mode[date_str] = not st.session_state.edit_mode.get(date_str, False)
-                    st.rerun()
-            with col3:
-                if st.button("🗑️ 削除", key=f"delete_{date_str}"):
-                    st.session_state.records = [r for r in st.session_state.records if r['date'] != date_str]
-                    InventoryManager.save_records(st.session_state.records)
-                    st.success(f"✅ {date_str}の記録を削除しました")
-                    st.rerun()
-            
-            # 編集モード
-            if st.session_state.edit_mode.get(date_str, False):
-                st.warning("📝 編集モード")
-                edited_record = record.copy()
-                
-                for ttype in TSHIRT_TYPES:
-                    st.markdown(f"**{ttype.replace('パンクラス×禅道会コラボTシャツ', '')}**")
-                    cols = st.columns(len(SIZES))
-                    
-                    for idx, size in enumerate(SIZES):
-                        with cols[idx]:
-                            current_val = record['inventory'].get(ttype, {}).get(size, 0)
-                            new_val = st.number_input(
-                                f"{size}",
-                                min_value=0,
-                                value=current_val,
-                                step=1,
-                                key=f"edit_{date_str}_{ttype}_{size}"
-                            )
-                            edited_record['inventory'][ttype][size] = new_val
-                
-                if st.button("💾 変更を保存", key=f"save_{date_str}"):
-                    for idx, r in enumerate(st.session_state.records):
-                        if r['date'] == date_str:
-                            st.session_state.records[idx] = edited_record
-                            break
-                    InventoryManager.save_records(st.session_state.records)
-                    st.session_state.edit_mode[date_str] = False
-                    st.success(f"✅ {date_str}の記録を更新しました")
-                    st.rerun()
-            
-            # 通常表示
-            else:
-                col1, col2 = st.columns(2)
-                for idx, ttype in enumerate(TSHIRT_TYPES):
-                    with col1 if idx % 2 == 0 else col2:
-                        inventory_data = record['inventory'].get(ttype, {})
-                        total = sum(inventory_data.values())
-                        
-                        st.markdown(f"**{ttype.replace('パンクラス×禅道会コラボTシャツ', '')}**")
-                        st.markdown(f"<h3 style='color: blue;'>合計: {total}枚</h3>", unsafe_allow_html=True)
-                        
-                        details = " | ".join([f"{size}: {inventory_data.get(size, 0)}" for size in SIZES])
-                        st.caption(details)
+    c_csv, c_xls = st.columns(2)
+    with c_csv:
+        if st.button("📊 CSVダウンロード", use_container_width=True): export_records('csv', start_date, end_date)
+    with c_xls:
+        if st.button("📈 Excelダウンロード", use_container_width=True): export_records('excel', start_date, end_date)
+    st.divider()
 
-def export_csv(start_date, end_date):
-    """CSV形式でエクスポート"""
-    start_str = start_date.strftime('%Y-%m-%d')
-    end_str = end_date.strftime('%Y-%m-%d')
-    
-    filtered = [r for r in st.session_state.records 
-               if start_str <= r['date'] <= end_str]
-    
-    if not filtered:
-        st.warning("⚠️ エクスポートするデータがありません")
+    records = st.session_state.records
+    if not records:
+        st.info("データがありません。")
         return
-    
+
+    for i, record in enumerate(records):
+        d_str = record['date']
+        if not (start_date <= datetime.strptime(d_str, '%Y-%m-%d').date() <= end_date): continue
+        note = record.get('note', '')
+        with st.expander(f"📅 {d_str} {f'({note})' if note else ''}"):
+            is_editing = st.session_state.edit_mode.get(d_str, False)
+            c_info, c_edit, c_del = st.columns([6, 2, 2])
+            with c_edit:
+                if st.button("✏️ 編集", key=f"btn_edit_{d_str}"):
+                    st.session_state.edit_mode[d_str] = not is_editing
+                    st.rerun()
+            with c_del:
+                if st.button("🗑️ 削除", key=f"btn_del_{d_str}", type="primary"):
+                    st.session_state.records.pop(i)
+                    InventoryManager.save_records(st.session_state.records)
+                    st.rerun()
+            
+            if is_editing:
+                st.info("📝 編集中...")
+                edited_inv = record['inventory'].copy()
+                for ttype in TSHIRT_TYPES:
+                    st.caption(f"**{ttype}**")
+                    cols = st.columns(len(SIZES))
+                    for idx, size in enumerate(SIZES):
+                        key = f"e_{d_str}_{ttype}_{size}"
+                        old_val = edited_inv.get(ttype, {}).get(size, 0)
+                        edited_inv[ttype][size] = cols[idx].number_input(size, value=old_val, min_value=0, key=key, label_visibility="collapsed")
+                if st.button("💾 保存", key=f"save_{d_str}"):
+                    record['inventory'] = edited_inv
+                    InventoryManager.save_records(st.session_state.records)
+                    st.session_state.edit_mode[d_str] = False
+                    st.rerun()
+            else:
+                st.dataframe(pd.DataFrame([{"種類": t.replace('パンクラス×禅道会コラボTシャツ', ''), **inv} for t, inv in record['inventory'].items()]).set_index("種類"))
+
+def export_records(fmt, start, end):
+    records = st.session_state.records
     data = []
-    for record in sorted(filtered, key=lambda x: x['date']):
+    for r in records:
+        d = r['date']
+        if not (start <= datetime.strptime(d, '%Y-%m-%d').date() <= end): continue
         for ttype in TSHIRT_TYPES:
             for size in SIZES:
-                count = record['inventory'].get(ttype, {}).get(size, 0)
-                data.append([record['date'], ttype, size, count])
-    
-    df = pd.DataFrame(data, columns=['日付', 'Tシャツ種類', 'サイズ', '在庫数'])
-    csv = df.to_csv(index=False, encoding='utf-8-sig')
-    
-    st.download_button(
-        label="📥 CSVファイルをダウンロード",
-        data=csv,
-        file_name=f"在庫記録_{start_str}_{end_str}.csv",
-        mime="text/csv"
-    )
-
-def export_excel(start_date, end_date):
-    """Excel形式でエクスポート"""
-    start_str = start_date.strftime('%Y-%m-%d')
-    end_str = end_date.strftime('%Y-%m-%d')
-    
-    filtered = [r for r in st.session_state.records 
-               if start_str <= r['date'] <= end_str]
-    
-    if not filtered:
-        st.warning("⚠️ エクスポートするデータがありません")
+                data.append({"日付": d, "種類": ttype, "サイズ": size, "在庫数": r['inventory'].get(ttype, {}).get(size, 0)})
+    df = pd.DataFrame(data)
+    if df.empty:
+        st.warning("対象データなし")
         return
-    
-    output = io.BytesIO()
-    wb = openpyxl.Workbook()
-    
-    for i, ttype in enumerate(TSHIRT_TYPES):
-        if i == 0:
-            ws = wb.active
-            ws.title = ttype[:31]
-        else:
-            ws = wb.create_sheet(title=ttype[:31])
-        
-        ws['A1'] = '日付'
-        for j, size in enumerate(SIZES):
-            ws.cell(row=1, column=j+2, value=size)
-        
-        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-        header_font = Font(bold=True, color="FFFFFF")
-        
-        for cell in ws[1]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal="center")
-        
-        for row_idx, record in enumerate(sorted(filtered, key=lambda x: x['date']), start=2):
-            ws.cell(row=row_idx, column=1, value=record['date'])
-            for col_idx, size in enumerate(SIZES, start=2):
-                count = record['inventory'].get(ttype, {}).get(size, 0)
-                cell = ws.cell(row=row_idx, column=col_idx, value=count)
-                cell.alignment = Alignment(horizontal="center")
-        
-        for column in ws.columns:
-            max_length = 0
-            column_letter = column[0].column_letter
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            ws.column_dimensions[column_letter].width = max(max_length + 2, 12)
-    
-    wb.save(output)
-    output.seek(0)
-    
-    st.download_button(
-        label="📥 Excelファイルをダウンロード",
-        data=output,
-        file_name=f"在庫記録_{start_str}_{end_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    if fmt == 'csv':
+        st.download_button("CSV DL", df.to_csv(index=False).encode('utf-8-sig'), "records.csv", "text/csv")
+    else:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.pivot_table(index=['種類', 'サイズ'], columns='日付', values='在庫数', fill_value=0).to_excel(writer, sheet_name="日次推移")
+        output.seek(0)
+        st.download_button("Excel DL", output, "records.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-def settings_tab():
-    """設定タブ"""
-    st.header("⚙️ 設定")
+# --- タブ3: タグ管理 (新規) ---
+def tags_tab():
+    st.header("🏷️ タグ（衣服）在庫管理")
     
-    # サイズ管理
-    with st.expander("📏 サイズ管理", expanded=True):
-        st.markdown("**現在のサイズ:**")
-        st.info(" | ".join(SIZES))
-        
-        st.caption("※ サイズの追加はコードを直接編集してください")
+    # 現在の在庫表示
+    current_stock = st.session_state.tags.get("current_stock", 0)
     
-    # データ管理
-    with st.expander("🗄️ データ管理", expanded=True):
-        col1, col2 = st.columns(2)
-        
+    st.markdown("<div class='big-label'>現在の在庫数</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='big-number'>{current_stock:,} 枚</div>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # アクション入力
+    st.subheader("📝 在庫の更新（使用・入荷・不良）")
+    st.caption("※ タグを使用した日、または入荷した際にここから入力してください。")
+
+    with st.form("tag_action_form", clear_on_submit=True):
+        col1, col2 = st.columns([1, 2])
         with col1:
-            st.markdown("**データバックアップ**")
-            if st.button("💾 全データをダウンロード"):
-                backup_data()
-        
+            action_type = st.radio("区分", ["使用 (－)", "入荷・追加 (＋)", "不良 (－)"], horizontal=False)
         with col2:
-            st.markdown("**データリストア**")
-            uploaded_file = st.file_uploader("JSONファイルをアップロード", type=['json'])
-            if uploaded_file:
-                restore_data(uploaded_file)
+            amount = st.number_input("数量 (枚)", min_value=1, step=1, value=0)
+            note = st.text_input("備考 (任意)", placeholder="例: 12月分受注, 追加発注分など")
+        
+        submitted = st.form_submit_button("更新を記録する", use_container_width=True)
+        
+        if submitted and amount > 0:
+            update_tag_stock(action_type, amount, note)
     
-    # システム情報
-    with st.expander("ℹ️ システム情報", expanded=True):
-        st.markdown(f"""
-        **バージョン:** 2.0.0 (Streamlit Web App)  
-        **登録サイズ数:** {len(SIZES)}  
-        **日次記録数:** {len(st.session_state.records)}  
-        **データ保存:** JSONファイル（永続化）
-        """)
+    st.markdown("---")
+    
+    # 履歴表示
+    st.subheader("📜 更新履歴")
+    history = st.session_state.tags.get("history", [])
+    if history:
+        df_hist = pd.DataFrame(history)
+        st.dataframe(df_hist, use_container_width=True)
+    else:
+        st.info("まだ履歴がありません。")
 
-def backup_data():
-    """データをバックアップ"""
-    backup = {
-        'inventory': st.session_state.inventory,
-        'records': st.session_state.records,
-        'backup_date': datetime.now().isoformat()
+def update_tag_stock(action_type, amount, note):
+    """タグの在庫を更新し履歴に追加"""
+    current_stock = st.session_state.tags.get("current_stock", 0)
+    
+    if "使用" in action_type:
+        new_stock = current_stock - amount
+        act_label = "使用"
+    elif "入荷" in action_type:
+        new_stock = current_stock + amount
+        act_label = "入荷"
+    elif "不良" in action_type:
+        new_stock = current_stock - amount
+        act_label = "不良"
+    
+    # 在庫がマイナスになる場合の警告（記録は許可する）
+    if new_stock < 0:
+        st.warning("⚠️ 在庫数がマイナスになります。")
+
+    # データ更新
+    new_entry = {
+        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "date": datetime.now().strftime('%Y-%m-%d'),
+        "action": act_label,
+        "amount": amount,
+        "stock_after": new_stock,
+        "note": note
     }
     
-    json_str = json.dumps(backup, ensure_ascii=False, indent=2)
-    st.download_button(
-        label="📥 バックアップファイルをダウンロード",
-        data=json_str,
-        file_name=f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-        mime="application/json"
-    )
+    st.session_state.tags["current_stock"] = new_stock
+    st.session_state.tags["history"].insert(0, new_entry) # 先頭に追加
+    
+    InventoryManager.save_tags(st.session_state.tags)
+    st.success(f"✅ {act_label} {amount}枚 を記録しました。（現在庫: {new_stock}枚）")
+    st.rerun()
 
-def restore_data(uploaded_file):
-    """データをリストア"""
-    try:
-        backup = json.load(uploaded_file)
-        st.session_state.inventory = backup['inventory']
-        st.session_state.records = backup['records']
-        
-        InventoryManager.save_inventory(st.session_state.inventory)
-        InventoryManager.save_records(st.session_state.records)
-        
-        st.success("✅ データをリストアしました")
-        st.rerun()
-    except Exception as e:
-        st.error(f"❌ リストアに失敗しました: {str(e)}")
+# --- タブ4: データ管理 ---
+def settings_tab():
+    st.header("⚙️ データ管理")
+    st.warning("クラウド版（Web）では再起動でデータが消えるため、定期的にバックアップをDLしてください。")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("📤 バックアップ")
+        # タグデータも含める
+        full_data = {
+            'inventory': st.session_state.inventory,
+            'records': st.session_state.records,
+            'tags': st.session_state.tags,
+            'saved_at': datetime.now().isoformat()
+        }
+        json_str = json.dumps(full_data, ensure_ascii=False, indent=2)
+        st.download_button("📦 全データをバックアップ", json_str, f"backup_{datetime.now().strftime('%Y%m%d')}.json", "application/json", type="primary")
 
+    with col2:
+        st.subheader("📥 データ復元")
+        uploaded = st.file_uploader("バックアップファイル (.json)", type=['json'])
+        if uploaded:
+            try:
+                data = json.load(uploaded)
+                # Tシャツデータ
+                if 'inventory' in data: st.session_state.inventory = data['inventory']
+                if 'records' in data: st.session_state.records = data['records']
+                # タグデータ
+                if 'tags' in data: st.session_state.tags = data['tags']
+                
+                # ファイル保存
+                InventoryManager.save_inventory(st.session_state.inventory)
+                InventoryManager.save_records(st.session_state.records)
+                InventoryManager.save_tags(st.session_state.tags)
+                
+                st.success("✅ データを復元しました！")
+                if st.button("更新を反映"): st.rerun()
+            except Exception as e:
+                st.error(f"復元失敗: {e}")
+
+# --- タブ5: マニュアル (新規) ---
+def manual_tab():
+    st.header("📖 システム操作マニュアル")
+    st.markdown("""
+    このシステムは、**「Tシャツ」**と**「タグ」**の在庫を管理し、記録を残すためのツールです。
+    データが消えないよう、以下の手順に従って操作してください。
+    """)
+
+    with st.expander("1. Tシャツの在庫管理（毎日実施）", expanded=True):
+        st.markdown("""
+        **【概要】**
+        * 毎日、その時点でのTシャツ在庫数を入力し、保存します。
+        
+        **【手順】**
+        1.  **「📦 在庫入力」**タブを開きます。
+        2.  各Tシャツのサイズごとに、現在の在庫数を入力します（＋－ボタンも使えます）。
+        3.  入力が終わったら、画面上部の**「💾 本日の記録を保存/更新」**ボタンを押します。
+        4.  画面右上に「✅ 保存しました」と表示されれば完了です。
+        
+        **【注意】**
+        * 保存ボタンを押さないと、その日の記録は残りません。
+        * Excelから一括で取り込みたい場合は「過去データをExcelから一括インポート」を使用してください。
+        """)
+
+    with st.expander("2. タグ（衣服）の在庫管理（使用・入荷時のみ）", expanded=True):
+        st.markdown("""
+        **【概要】**
+        * タグを使用した日や、新しいタグが入荷した時に記録します。
+        * 日々の入力は不要です。アクションがあった時だけ操作してください。
+        
+        **【手順】**
+        1.  **「🏷️ タグ管理」**タブを開きます。
+        2.  フォームで**「使用」「入荷」「不良」**のいずれかを選択します。
+        3.  枚数を入力し、必要であれば備考（「〇月分受注」など）を記入します。
+        4.  **「更新を記録する」**ボタンを押します。
+        5.  在庫数が自動計算され、下の履歴表に行が追加されます。
+        """)
+
+    with st.expander("3. データの修正・確認", expanded=True):
+        st.markdown("""
+        * **Tシャツの履歴:** 「📊 記録一覧」タブで過去の記録を確認できます。「✏️ 編集」ボタンで後から数値を修正したり、「🗑️ 削除」で間違った日の記録を消すことができます。
+        * **データの出力:** 各タブにある「Excelダウンロード」等のボタンから、報告用のファイルを作成できます。
+        """)
+
+    with st.expander("4. 【重要】データのバックアップと復元", expanded=True):
+        st.warning("⚠️ この作業は非常に重要です")
+        st.markdown("""
+        このシステムはWeb上で動作しているため、**長時間放置したりページを閉じたりすると、入力したデータがリセットされる場合があります。**
+        
+        **【作業終了時】**
+        1.  **「⚙️ データ管理」**タブを開きます。
+        2.  **「📦 全データをバックアップ」**ボタンを押し、ファイルをPCやiPadに保存してください。
+        
+        **【作業開始時（データが消えていた場合）】**
+        1.  **「⚙️ データ管理」**タブを開きます。
+        2.  「📥 データ復元」に、前回保存したファイルをアップロードします。
+        3.  データが元の状態に戻ります。
+        """)
+
+# --- メイン処理 ---
 def main():
     init_session_state()
+    st.title(PAGE_TITLE)
     
-    st.title("👕 Tシャツ在庫管理システム")
-    st.markdown("**パンクラス×禅道会コラボTシャツ**")
+    # タブ構成を変更
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📦 Tシャツ在庫", 
+        "🏷️ タグ管理", 
+        "📊 Tシャツ記録", 
+        "⚙️ データ管理",
+        "📖 マニュアル"
+    ])
     
-    # タブ
-    tab1, tab2, tab3 = st.tabs(["📦 在庫管理", "📊 日次記録", "⚙️ 設定"])
-    
-    with tab1:
-        inventory_tab()
-    
-    with tab2:
-        records_tab()
-    
-    with tab3:
-        settings_tab()
+    with tab1: inventory_tab()
+    with tab2: tags_tab()    # 新機能
+    with tab3: records_tab()
+    with tab4: settings_tab()
+    with tab5: manual_tab()  # 新機能
 
 if __name__ == "__main__":
     main()
