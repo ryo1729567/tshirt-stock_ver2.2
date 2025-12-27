@@ -345,7 +345,82 @@ def export_current_excel():
     output.seek(0)
     st.download_button("📥 Excelダウンロード", output, f"在庫_{datetime.now().strftime('%Y%m%d')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# --- タブ2: Tシャツ日次記録 ---
+# --- タブ2: タグ管理 (修正版) ---
+def tags_tab():
+    st.header("🏷️ タグ（衣服）在庫管理")
+    
+    # 現在の在庫表示
+    current_stock = st.session_state.tags.get("current_stock", 0)
+    
+    st.markdown("<div class='big-label'>現在の在庫数</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='big-number'>{current_stock:,} 枚</div>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # アクション入力
+    st.subheader("📝 在庫の更新（使用・入荷・不良）")
+    st.caption("※ タグを使用した日、または入荷した際にここから入力してください。")
+
+    with st.form("tag_action_form", clear_on_submit=True):
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            action_type = st.radio("区分", ["使用 (－)", "入荷・追加 (＋)", "不良 (－)"], horizontal=False)
+        with col2:
+            # 修正: value=0 -> value=1 に変更 (min_value=1のため)
+            amount = st.number_input("数量 (枚)", min_value=1, step=1, value=1)
+            note = st.text_input("備考 (任意)", placeholder="例: 12月分受注, 追加発注分など")
+        
+        submitted = st.form_submit_button("更新を記録する", use_container_width=True)
+        
+        if submitted and amount > 0:
+            update_tag_stock(action_type, amount, note)
+    
+    st.markdown("---")
+    
+    # 履歴表示
+    st.subheader("📜 更新履歴")
+    history = st.session_state.tags.get("history", [])
+    if history:
+        df_hist = pd.DataFrame(history)
+        st.dataframe(df_hist, use_container_width=True)
+    else:
+        st.info("まだ履歴がありません。")
+
+def update_tag_stock(action_type, amount, note):
+    """タグの在庫を更新し履歴に追加"""
+    current_stock = st.session_state.tags.get("current_stock", 0)
+    
+    if "使用" in action_type:
+        new_stock = current_stock - amount
+        act_label = "使用"
+    elif "入荷" in action_type:
+        new_stock = current_stock + amount
+        act_label = "入荷"
+    elif "不良" in action_type:
+        new_stock = current_stock - amount
+        act_label = "不良"
+    
+    # 在庫がマイナスになる場合の警告（記録は許可する）
+    if new_stock < 0:
+        st.warning("⚠️ 在庫数がマイナスになります。")
+
+    # データ更新
+    new_entry = {
+        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "date": datetime.now().strftime('%Y-%m-%d'),
+        "action": act_label,
+        "amount": amount,
+        "stock_after": new_stock,
+        "note": note
+    }
+    
+    st.session_state.tags["current_stock"] = new_stock
+    st.session_state.tags["history"].insert(0, new_entry) # 先頭に追加
+    
+    InventoryManager.save_tags(st.session_state.tags)
+    st.success(f"✅ {act_label} {amount}枚 を記録しました。（現在庫: {new_stock}枚）")
+    st.rerun()
+
+# --- タブ3: Tシャツ日次記録 ---
 def records_tab():
     st.header("📊 Tシャツ日次記録")
     with st.expander("🔎 期間で絞り込み", expanded=False):
@@ -422,80 +497,6 @@ def export_records(fmt, start, end):
         output.seek(0)
         st.download_button("Excel DL", output, "records.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# --- タブ3: タグ管理 (新規) ---
-def tags_tab():
-    st.header("🏷️ タグ（衣服）在庫管理")
-    
-    # 現在の在庫表示
-    current_stock = st.session_state.tags.get("current_stock", 0)
-    
-    st.markdown("<div class='big-label'>現在の在庫数</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='big-number'>{current_stock:,} 枚</div>", unsafe_allow_html=True)
-    st.markdown("---")
-
-    # アクション入力
-    st.subheader("📝 在庫の更新（使用・入荷・不良）")
-    st.caption("※ タグを使用した日、または入荷した際にここから入力してください。")
-
-    with st.form("tag_action_form", clear_on_submit=True):
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            action_type = st.radio("区分", ["使用 (－)", "入荷・追加 (＋)", "不良 (－)"], horizontal=False)
-        with col2:
-            amount = st.number_input("数量 (枚)", min_value=1, step=1, value=0)
-            note = st.text_input("備考 (任意)", placeholder="例: 12月分受注, 追加発注分など")
-        
-        submitted = st.form_submit_button("更新を記録する", use_container_width=True)
-        
-        if submitted and amount > 0:
-            update_tag_stock(action_type, amount, note)
-    
-    st.markdown("---")
-    
-    # 履歴表示
-    st.subheader("📜 更新履歴")
-    history = st.session_state.tags.get("history", [])
-    if history:
-        df_hist = pd.DataFrame(history)
-        st.dataframe(df_hist, use_container_width=True)
-    else:
-        st.info("まだ履歴がありません。")
-
-def update_tag_stock(action_type, amount, note):
-    """タグの在庫を更新し履歴に追加"""
-    current_stock = st.session_state.tags.get("current_stock", 0)
-    
-    if "使用" in action_type:
-        new_stock = current_stock - amount
-        act_label = "使用"
-    elif "入荷" in action_type:
-        new_stock = current_stock + amount
-        act_label = "入荷"
-    elif "不良" in action_type:
-        new_stock = current_stock - amount
-        act_label = "不良"
-    
-    # 在庫がマイナスになる場合の警告（記録は許可する）
-    if new_stock < 0:
-        st.warning("⚠️ 在庫数がマイナスになります。")
-
-    # データ更新
-    new_entry = {
-        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "date": datetime.now().strftime('%Y-%m-%d'),
-        "action": act_label,
-        "amount": amount,
-        "stock_after": new_stock,
-        "note": note
-    }
-    
-    st.session_state.tags["current_stock"] = new_stock
-    st.session_state.tags["history"].insert(0, new_entry) # 先頭に追加
-    
-    InventoryManager.save_tags(st.session_state.tags)
-    st.success(f"✅ {act_label} {amount}枚 を記録しました。（現在庫: {new_stock}枚）")
-    st.rerun()
-
 # --- タブ4: データ管理 ---
 def settings_tab():
     st.header("⚙️ データ管理")
@@ -550,7 +551,7 @@ def manual_tab():
         * 毎日、その時点でのTシャツ在庫数を入力し、保存します。
         
         **【手順】**
-        1.  **「📦 在庫入力」**タブを開きます。
+        1.  **「📦 Tシャツ在庫」**タブを開きます。
         2.  各Tシャツのサイズごとに、現在の在庫数を入力します（＋－ボタンも使えます）。
         3.  入力が終わったら、画面上部の**「💾 本日の記録を保存/更新」**ボタンを押します。
         4.  画面右上に「✅ 保存しました」と表示されれば完了です。
@@ -576,7 +577,7 @@ def manual_tab():
 
     with st.expander("3. データの修正・確認", expanded=True):
         st.markdown("""
-        * **Tシャツの履歴:** 「📊 記録一覧」タブで過去の記録を確認できます。「✏️ 編集」ボタンで後から数値を修正したり、「🗑️ 削除」で間違った日の記録を消すことができます。
+        * **Tシャツの履歴:** 「📊 Tシャツ記録」タブで過去の記録を確認できます。「✏️ 編集」ボタンで後から数値を修正したり、「🗑️ 削除」で間違った日の記録を消すことができます。
         * **データの出力:** 各タブにある「Excelダウンロード」等のボタンから、報告用のファイルを作成できます。
         """)
 
@@ -600,7 +601,7 @@ def main():
     init_session_state()
     st.title(PAGE_TITLE)
     
-    # タブ構成を変更
+    # タブ構成
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📦 Tシャツ在庫", 
         "🏷️ タグ管理", 
@@ -610,10 +611,10 @@ def main():
     ])
     
     with tab1: inventory_tab()
-    with tab2: tags_tab()    # 新機能
+    with tab2: tags_tab()
     with tab3: records_tab()
     with tab4: settings_tab()
-    with tab5: manual_tab()  # 新機能
+    with tab5: manual_tab()
 
 if __name__ == "__main__":
     main()
